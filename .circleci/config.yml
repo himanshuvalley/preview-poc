@@ -37,8 +37,11 @@ jobs:
             set -e
 
             STAGE=""
+            echo "Branch: $CIRCLE_BRANCH"
+            echo "CIRCLE_PR_NUMBER=${CIRCLE_PR_NUMBER:-}"
+            echo "CIRCLE_PULL_REQUEST=${CIRCLE_PULL_REQUEST:-}"
 
-            # 1) CircleCI PR number (sometimes set)
+            # 1) CircleCI PR number
             if [ -n "$CIRCLE_PR_NUMBER" ]; then
               STAGE="pr-${CIRCLE_PR_NUMBER}"
               echo "Using CIRCLE_PR_NUMBER=$CIRCLE_PR_NUMBER"
@@ -49,28 +52,39 @@ jobs:
               NUM=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$' || true)
               if [ -n "$NUM" ]; then
                 STAGE="pr-${NUM}"
-                echo "Using CIRCLE_PULL_REQUEST=$CIRCLE_PULL_REQUEST"
+                echo "Using CIRCLE_PULL_REQUEST number=$NUM"
               fi
             fi
 
-            # 3) Ask GitHub API: which open PR is this branch?
+            # 3) GitHub API (URL-encode branch: feature/my-test → feature%2Fmy-test)
             if [ -z "$STAGE" ]; then
-              echo "Looking up PR number from GitHub for branch: $CIRCLE_BRANCH"
-              RESP=$(curl -s "https://api.github.com/repos/himanshuvalley/preview-poc/pulls?head=himanshuvalley:${CIRCLE_BRANCH}&state=open")
-              NUM=$(echo "$RESP" | grep -o '"number": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+              ENCODED_BRANCH=$(echo "$CIRCLE_BRANCH" | sed 's|/|%2F|g')
+              API_URL="https://api.github.com/repos/himanshuvalley/preview-poc/pulls?head=himanshuvalley:${ENCODED_BRANCH}&state=open"
+              echo "Looking up PR: $API_URL"
+              RESP=$(curl -s "$API_URL")
+              NUM=$(echo "$RESP" | tr ',' '\n' | grep '"number"' | head -1 | grep -o '[0-9]*' || true)
               if [ -n "$NUM" ]; then
                 STAGE="pr-${NUM}"
                 echo "Using GitHub API PR number=$NUM"
               else
-                echo "GitHub API response (truncated):"
-                echo "$RESP" | head -c 500
-                echo
+                # also try state=all in case timing issue
+                RESP2=$(curl -s "https://api.github.com/repos/himanshuvalley/preview-poc/pulls?head=himanshuvalley:${ENCODED_BRANCH}&state=all")
+                NUM=$(echo "$RESP2" | tr ',' '\n' | grep '"number"' | head -1 | grep -o '[0-9]*' || true)
+                if [ -n "$NUM" ]; then
+                  STAGE="pr-${NUM}"
+                  echo "Using GitHub API (state=all) PR number=$NUM"
+                else
+                  echo "GitHub API response:"
+                  echo "$RESP"
+                fi
               fi
             fi
 
             if [ -z "$STAGE" ]; then
               echo "ERROR: No PR found for branch $CIRCLE_BRANCH"
-              echo "GitHub pe pehle Pull Request create karo, phir CircleCI rerun karo."
+              echo "1) GitHub pe PR create karo"
+              echo "2) CircleCI Project Settings → Advanced → Only build pull requests = ON"
+              echo "3) Phir Rerun / naya push karo"
               exit 1
             fi
 
