@@ -1,5 +1,17 @@
 version: 2.1
 
+# Client-style flow:
+# PR open  → deploy job
+# PR close → GitHub calls CircleCI API → destroy job runs HERE
+
+parameters:
+  run_destroy:
+    type: boolean
+    default: false
+  pr_number:
+    type: string
+    default: ""
+
 jobs:
   deploy-preview:
     docker:
@@ -23,25 +35,57 @@ jobs:
           command: |
             export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
 
-            # Prefer PR number so close/delete can use the same stage name
             if [ -n "$CIRCLE_PR_NUMBER" ]; then
               STAGE="pr-${CIRCLE_PR_NUMBER}"
             elif [ -n "$CIRCLE_PULL_REQUEST" ]; then
               STAGE="pr-$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$' )"
             else
-              echo "ERROR: Open a Pull Request (not only push branch). PR number required."
+              echo "ERROR: Open a Pull Request so PR number is available."
               exit 1
             fi
 
             echo "Deploying stage: $STAGE"
-            echo "STAGE=$STAGE" >> "$BASH_ENV"
             npx serverless deploy --stage "$STAGE" --verbose
-            echo "Preview URL base is in Stack Outputs → HttpApiUrl (add /hello)"
+            echo "Open HttpApiUrl from Stack Outputs and add /hello"
+
+  destroy-preview:
+    docker:
+      - image: cimg/node:18.20
+    steps:
+      - checkout
+      - run:
+          name: Check AWS env vars
+          command: |
+            if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+              echo "ERROR: Set AWS keys in CircleCI Project Settings → Environment Variables"
+              exit 1
+            fi
+            if [ -z "<< pipeline.parameters.pr_number >>" ]; then
+              echo "ERROR: pr_number parameter missing"
+              exit 1
+            fi
+      - run:
+          name: Install dependencies
+          command: npm install
+      - run:
+          name: Destroy preview on CircleCI
+          command: |
+            export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
+            STAGE="pr-<< pipeline.parameters.pr_number >>"
+            echo "Destroying stage: $STAGE (running on CircleCI)"
+            npx serverless remove --stage "$STAGE" --verbose
 
 workflows:
-  preview:
+  deploy:
+    when:
+      not: << pipeline.parameters.run_destroy >>
     jobs:
       - deploy-preview:
           filters:
             branches:
               ignore: main
+
+  destroy:
+    when: << pipeline.parameters.run_destroy >>
+    jobs:
+      - destroy-preview

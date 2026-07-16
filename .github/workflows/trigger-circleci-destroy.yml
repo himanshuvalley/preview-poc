@@ -1,0 +1,39 @@
+# Only triggers CircleCI API. Actual delete runs on CircleCI (client RFP style).
+name: Trigger CircleCI destroy on PR close
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  trigger-circleci-destroy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call CircleCI API to destroy preview
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLE_TOKEN }}
+        run: |
+          if [ -z "$CIRCLE_TOKEN" ]; then
+            echo "ERROR: Add CIRCLE_TOKEN in GitHub → Settings → Secrets → Actions"
+            exit 1
+          fi
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          echo "Triggering CircleCI destroy for PR #$PR_NUMBER"
+
+          HTTP_CODE=$(curl -s -o /tmp/circle_resp.json -w "%{http_code}" -X POST \
+            "https://circleci.com/api/v2/project/gh/himanshuvalley/preview-poc/pipeline" \
+            -H "Circle-Token: ${CIRCLE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"branch\":\"main\",\"parameters\":{\"run_destroy\":true,\"pr_number\":\"${PR_NUMBER}\"}}")
+
+          echo "HTTP status: $HTTP_CODE"
+          cat /tmp/circle_resp.json
+          echo
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "CircleCI trigger failed"
+            exit 1
+          fi
+
+          echo "OK — check CircleCI for destroy-preview job"
