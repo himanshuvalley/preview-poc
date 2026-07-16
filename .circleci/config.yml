@@ -1,0 +1,147 @@
+{
+  "Comment": "Video merge: parallel probe → parallel normalize → concat + API callback",
+  "StartAt": "ProbeClips",
+  "States": {
+    "ProbeClips": {
+      "Type": "Map",
+      "Comment": "Run video-merge-probe-clip once per clip in parallel",
+      "ItemsPath": "$.clips",
+      "MaxConcurrency": 10,
+      "Parameters": {
+        "uploaded_pdf_id.$": "$.uploaded_pdf_id",
+        "merge_gen.$": "$.merge_gen",
+        "log_context.$": "$.log_context",
+        "probe_function_name.$": "$.probe_function_name",
+        "job_type": "probe_clip",
+        "clip_index.$": "$$.Map.Item.Index",
+        "source_url.$": "$$.Map.Item.Value.source_url",
+        "original_file.$": "$$.Map.Item.Value.original_file"
+      },
+      "Iterator": {
+        "StartAt": "ProbeClip",
+        "States": {
+          "ProbeClip": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName.$": "$.probe_function_name",
+              "Payload": {
+                "job_type.$": "$.job_type",
+                "uploaded_pdf_id.$": "$.uploaded_pdf_id",
+                "merge_gen.$": "$.merge_gen",
+                "log_context.$": "$.log_context",
+                "clip_index.$": "$.clip_index",
+                "source_url.$": "$.source_url",
+                "original_file.$": "$.original_file"
+              }
+            },
+            "OutputPath": "$.Payload",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.probed_clips",
+      "Next": "NormalizeClips"
+    },
+    "NormalizeClips": {
+      "Type": "Map",
+      "Comment": "Run video-merge-normalize-clip once per probed clip in parallel",
+      "ItemsPath": "$.probed_clips",
+      "MaxConcurrency": 10,
+      "Parameters": {
+        "uploaded_pdf_id.$": "$.uploaded_pdf_id",
+        "merge_gen.$": "$.merge_gen",
+        "log_context.$": "$.log_context",
+        "normalize_function_name.$": "$.normalize_function_name",
+        "job_type": "normalize_clip",
+        "probe_result.$": "$$.Map.Item.Value",
+        "clip_index.$": "$$.Map.Item.Value.clip_index",
+        "source_url.$": "$$.Map.Item.Value.source_url",
+        "original_file.$": "$$.Map.Item.Value.original_file"
+      },
+      "Iterator": {
+        "StartAt": "NormalizeClip",
+        "States": {
+          "NormalizeClip": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName.$": "$.normalize_function_name",
+              "Payload": {
+                "job_type.$": "$.job_type",
+                "uploaded_pdf_id.$": "$.uploaded_pdf_id",
+                "merge_gen.$": "$.merge_gen",
+                "log_context.$": "$.log_context",
+                "clip_index.$": "$.clip_index",
+                "source_url.$": "$.source_url",
+                "original_file.$": "$.original_file",
+                "probe_result.$": "$.probe_result"
+              }
+            },
+            "OutputPath": "$.Payload",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.normalized_clips",
+      "Next": "ConcatClips"
+    },
+    "ConcatClips": {
+      "Type": "Task",
+      "Comment": "Run video-merge-concat once after all clips are normalized",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName.$": "$.concat_function_name",
+        "Payload": {
+          "job_type": "concat_clips",
+          "uploaded_pdf_id.$": "$.uploaded_pdf_id",
+          "merge_gen.$": "$.merge_gen",
+          "log_context.$": "$.log_context",
+          "normalized_clips.$": "$.normalized_clips"
+        }
+      },
+      "OutputPath": "$.Payload",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "End": true
+    }
+  }
+}
+
