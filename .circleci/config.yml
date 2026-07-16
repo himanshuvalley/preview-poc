@@ -34,13 +34,43 @@ jobs:
           name: Deploy preview
           command: |
             export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-ap-south-1}"
+            set -e
 
+            STAGE=""
+
+            # 1) CircleCI PR number (sometimes set)
             if [ -n "$CIRCLE_PR_NUMBER" ]; then
               STAGE="pr-${CIRCLE_PR_NUMBER}"
-            elif [ -n "$CIRCLE_PULL_REQUEST" ]; then
-              STAGE="pr-$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$' )"
-            else
-              echo "ERROR: Open a Pull Request so PR number is available."
+              echo "Using CIRCLE_PR_NUMBER=$CIRCLE_PR_NUMBER"
+            fi
+
+            # 2) CIRCLE_PULL_REQUEST URL
+            if [ -z "$STAGE" ] && [ -n "$CIRCLE_PULL_REQUEST" ]; then
+              NUM=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$' || true)
+              if [ -n "$NUM" ]; then
+                STAGE="pr-${NUM}"
+                echo "Using CIRCLE_PULL_REQUEST=$CIRCLE_PULL_REQUEST"
+              fi
+            fi
+
+            # 3) Ask GitHub API: which open PR is this branch?
+            if [ -z "$STAGE" ]; then
+              echo "Looking up PR number from GitHub for branch: $CIRCLE_BRANCH"
+              RESP=$(curl -s "https://api.github.com/repos/himanshuvalley/preview-poc/pulls?head=himanshuvalley:${CIRCLE_BRANCH}&state=open")
+              NUM=$(echo "$RESP" | grep -o '"number": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+              if [ -n "$NUM" ]; then
+                STAGE="pr-${NUM}"
+                echo "Using GitHub API PR number=$NUM"
+              else
+                echo "GitHub API response (truncated):"
+                echo "$RESP" | head -c 500
+                echo
+              fi
+            fi
+
+            if [ -z "$STAGE" ]; then
+              echo "ERROR: No PR found for branch $CIRCLE_BRANCH"
+              echo "GitHub pe pehle Pull Request create karo, phir CircleCI rerun karo."
               exit 1
             fi
 
