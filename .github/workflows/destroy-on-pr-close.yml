@@ -1,0 +1,31 @@
+# Auto-delete preview stack when PR is closed or merged
+name: Destroy preview on PR close
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  destroy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Destroy preview stack
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          STAGE="pr-${{ github.event.pull_request.number }}"
+          echo "Destroying stage: $STAGE"
+          npx serverless remove --stage "$STAGE" --verbose
